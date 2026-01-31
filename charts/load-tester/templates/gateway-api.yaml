@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: gateway-api
+    {{- include "load-tester.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.gatewayApi.replicaCount }}
+  selector:
+    matchLabels:
+      app: gateway-api
+  template:
+    metadata:
+      labels:
+        app: gateway-api
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: {{ .Values.securityContext.runAsNonRoot }}
+        runAsUser: {{ .Values.securityContext.runAsUser }}
+      containers:
+        - name: gateway-api
+          image: {{ include "load-tester.image" (dict "registry" .Values.images.registry "repository" .Values.images.gatewayApi.repository "tag" .Values.images.gatewayApi.tag) }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          ports:
+            - containerPort: 8000
+              protocol: TCP
+          env:
+            - name: SERVICE_BUS_CONNECTION_STRING
+              valueFrom:
+                secretKeyRef:
+                  name: servicebus-secret
+                  key: connectionString
+            - name: SERVICE_BUS_QUEUE_NAME
+              value: {{ .Values.serviceBus.queueName | quote }}
+          resources:
+            {{- toYaml .Values.gatewayApi.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: gateway-api
+    {{- include "load-tester.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.gatewayApi.service.type }}
+  ports:
+    - port: {{ .Values.gatewayApi.service.port }}
+      targetPort: 8000
+      protocol: TCP
+  selector:
+    app: gateway-api

@@ -1,0 +1,13 @@
+apiVersion: v2
+name: load-tester
+description: A Helm chart for distributed load testing system on AKS
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - load-testing
+  - kubernetes
+  - azure
+  - aks
+maintainers:
+  - name: DevOps Team

@@ -1,0 +1,55 @@
+# Load Tester Helm Chart - NOTES.txt
+# This file is rendered after installation
+
+Thank you for installing {{ .Chart.Name }}.
+
+Your release is named {{ .Release.Name }}.
+
+## Services Deployed
+
+1. Target API - Deployment + Service
+2. Gateway API - Deployment + Service
+3. Orchestrator - Deployment with RBAC
+
+## Getting Started
+
+1. Get the Gateway API endpoint:
+{{- if eq .Values.gatewayApi.service.type "LoadBalancer" }}
+   It may take a few minutes for the LoadBalancer IP to be available.
+   Watch the status with:
+   
+   kubectl get svc gateway-api -n {{ .Values.namespace }} -w
+   
+   Once the EXTERNAL-IP is available, access the Gateway API at:
+   
+   http://<EXTERNAL-IP>:{{ .Values.gatewayApi.service.port }}
+{{- else }}
+   kubectl port-forward svc/gateway-api -n {{ .Values.namespace }} 8000:{{ .Values.gatewayApi.service.port }}
+   
+   Then access the Gateway API at: http://localhost:8000
+{{- end }}
+
+2. Submit a load test:
+
+   curl -X POST "http://<GATEWAY-IP>:{{ .Values.gatewayApi.service.port }}/tests" \
+     -H "Content-Type: application/json" \
+     -d '{"hits_per_sec": 100, "duration_sec": 60, "workers": 3}'
+
+3. Check the hit counter:
+
+   kubectl port-forward svc/target-api -n {{ .Values.namespace }} 8001:{{ .Values.targetApi.service.port }}
+   curl http://localhost:8001/stats
+
+4. View orchestrator logs:
+
+   kubectl logs -n {{ .Values.namespace }} -l app=orchestrator -f
+
+5. View worker pods:
+
+   kubectl get pods -n {{ .Values.namespace }} -l app=load-worker
+
+## Cleanup
+
+To uninstall the chart:
+
+   helm uninstall {{ .Release.Name }}

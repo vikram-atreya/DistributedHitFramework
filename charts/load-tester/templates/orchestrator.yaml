@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orchestrator
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: orchestrator
+    {{- include "load-tester.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.orchestrator.replicaCount }}
+  selector:
+    matchLabels:
+      app: orchestrator
+  template:
+    metadata:
+      labels:
+        app: orchestrator
+    spec:
+      serviceAccountName: {{ include "load-tester.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: {{ .Values.securityContext.runAsNonRoot }}
+        runAsUser: {{ .Values.securityContext.runAsUser }}
+      containers:
+        - name: orchestrator
+          image: {{ include "load-tester.image" (dict "registry" .Values.images.registry "repository" .Values.images.orchestrator.repository "tag" .Values.images.orchestrator.tag) }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          env:
+            - name: SERVICE_BUS_CONNECTION_STRING
+              valueFrom:
+                secretKeyRef:
+                  name: servicebus-secret
+                  key: connectionString
+            - name: SERVICE_BUS_QUEUE_NAME
+              value: {{ .Values.serviceBus.queueName | quote }}
+            - name: K8S_NAMESPACE
+              value: {{ .Values.namespace | quote }}
+            - name: TARGET_URL
+              value: "http://target-api:{{ .Values.targetApi.service.port }}/hit"
+            - name: WORKER_IMAGE
+              value: {{ include "load-tester.image" (dict "registry" .Values.images.registry "repository" .Values.images.worker.repository "tag" .Values.images.worker.tag) }}
+            - name: WORKER_CPU_REQUEST
+              value: {{ .Values.worker.resources.requests.cpu | quote }}
+            - name: WORKER_CPU_LIMIT
+              value: {{ .Values.worker.resources.limits.cpu | quote }}
+            - name: WORKER_MEMORY_REQUEST
+              value: {{ .Values.worker.resources.requests.memory | quote }}
+            - name: WORKER_MEMORY_LIMIT
+              value: {{ .Values.worker.resources.limits.memory | quote }}
+          resources:
+            {{- toYaml .Values.orchestrator.resources | nindent 12 }}

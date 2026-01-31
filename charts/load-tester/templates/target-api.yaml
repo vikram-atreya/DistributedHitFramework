@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: target-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: target-api
+    {{- include "load-tester.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.targetApi.replicaCount }}
+  selector:
+    matchLabels:
+      app: target-api
+  template:
+    metadata:
+      labels:
+        app: target-api
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: {{ .Values.securityContext.runAsNonRoot }}
+        runAsUser: {{ .Values.securityContext.runAsUser }}
+      containers:
+        - name: target-api
+          image: {{ include "load-tester.image" (dict "registry" .Values.images.registry "repository" .Values.images.targetApi.repository "tag" .Values.images.targetApi.tag) }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          ports:
+            - containerPort: 8000
+              protocol: TCP
+          env:
+            - name: REDIS_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secret
+                  key: host
+            - name: REDIS_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secret
+                  key: port
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secret
+                  key: password
+            - name: REDIS_SSL
+              value: {{ .Values.redis.ssl | quote }}
+            - name: REDIS_KEY
+              value: {{ .Values.redis.key | quote }}
+          resources:
+            {{- toYaml .Values.targetApi.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: target-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: target-api
+    {{- include "load-tester.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.targetApi.service.type }}
+  ports:
+    - port: {{ .Values.targetApi.service.port }}
+      targetPort: 8000
+      protocol: TCP
+  selector:
+    app: target-api

@@ -1,0 +1,101 @@
+# Default values for load-tester Helm chart
+
+# Global settings
+namespace: load-testing
+
+# Docker image settings
+images:
+  registry: ""  # e.g., myregistry.azurecr.io
+  pullPolicy: Always
+  targetApi:
+    repository: target-api
+    tag: latest
+  gatewayApi:
+    repository: gateway-api
+    tag: latest
+  orchestrator:
+    repository: orchestrator
+    tag: latest
+  worker:
+    repository: worker
+    tag: latest
+
+# Image pull secrets for private registries
+imagePullSecrets: []
+  # - name: acr-secret
+
+# Azure Redis Cache configuration
+redis:
+  host: ""  # e.g., myredis.redis.cache.windows.net
+  port: 6380
+  password: ""
+  ssl: true
+  key: total_hits
+
+# Azure Service Bus configuration
+serviceBus:
+  connectionString: ""
+  queueName: load-test-requests
+
+# Target API configuration
+targetApi:
+  replicaCount: 2
+  service:
+    type: ClusterIP
+    port: 8000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# Gateway API configuration
+gatewayApi:
+  replicaCount: 2
+  service:
+    type: LoadBalancer  # Use ClusterIP with Ingress in production
+    port: 8000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# Orchestrator configuration
+orchestrator:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# Worker defaults (can be overridden per test)
+worker:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# RBAC settings
+rbac:
+  create: true
+
+# Service account
+serviceAccount:
+  create: true
+  name: orchestrator-sa
+
+# Pod security context
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
