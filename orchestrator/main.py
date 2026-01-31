@@ -48,7 +48,7 @@ def signal_handler(signum, frame):
 
 
 class KubernetesOrchestrator:
-    """Manages Kubernetes worker deployments."""
+    """Manages Kubernetes worker jobs."""
     
     def __init__(self):
         """Initialize Kubernetes client."""
@@ -66,9 +66,10 @@ class KubernetesOrchestrator:
                 raise
         
         self.apps_v1 = client.AppsV1Api()
+        self.batch_v1 = client.BatchV1Api()
         self.core_v1 = client.CoreV1Api()
     
-    def create_worker_deployment(
+    def create_worker_job(
         self,
         test_id: str,
         workers: int,
@@ -76,31 +77,31 @@ class KubernetesOrchestrator:
         duration_sec: int
     ) -> bool:
         """
-        Create a Kubernetes Deployment for workers.
+        Create a Kubernetes Job for workers.
         
         Args:
             test_id: Unique test identifier
-            workers: Number of worker replicas
+            workers: Number of worker pods (parallelism)
             hits_per_sec: Total hits per second (divided among workers)
             duration_sec: Test duration in seconds
             
         Returns:
-            True if deployment created successfully, False otherwise
+            True if job created successfully, False otherwise
         """
-        deployment_name = f"worker-{test_id[:8]}"
+        job_name = f"worker-{test_id[:8]}"
         
         # Calculate per-worker hit rate
         hits_per_worker = max(1, hits_per_sec // workers)
         
-        logger.info(f"Creating deployment {deployment_name} with {workers} workers, "
+        logger.info(f"Creating job {job_name} with {workers} workers, "
                     f"{hits_per_worker} hits/sec per worker")
         
-        # Define the deployment
-        deployment = client.V1Deployment(
-            api_version="apps/v1",
-            kind="Deployment",
+        # Define the job
+        job = client.V1Job(
+            api_version="batch/v1",
+            kind="Job",
             metadata=client.V1ObjectMeta(
-                name=deployment_name,
+                name=job_name,
                 namespace=NAMESPACE,
                 labels={
                     "app": "load-worker",
@@ -108,14 +109,11 @@ class KubernetesOrchestrator:
                     "managed-by": "orchestrator"
                 }
             ),
-            spec=client.V1DeploymentSpec(
-                replicas=workers,
-                selector=client.V1LabelSelector(
-                    match_labels={
-                        "app": "load-worker",
-                        "test-id": test_id
-                    }
-                ),
+            spec=client.V1JobSpec(
+                parallelism=workers,
+                completions=workers,
+                backoff_limit=0,  # Don't retry failed pods
+                ttl_seconds_after_finished=300,  # Clean up after 5 minutes
                 template=client.V1PodTemplateSpec(
                     metadata=client.V1ObjectMeta(
                         labels={
@@ -129,7 +127,7 @@ class KubernetesOrchestrator:
                             client.V1Container(
                                 name="worker",
                                 image=WORKER_IMAGE,
-                                image_pull_policy="Always",
+                                image_pull_policy="IfNotPresent",
                                 env=[
                                     client.V1EnvVar(
                                         name="TARGET_URL",
@@ -166,86 +164,48 @@ class KubernetesOrchestrator:
         )
         
         try:
-            self.apps_v1.create_namespaced_deployment(
+            self.batch_v1.create_namespaced_job(
                 namespace=NAMESPACE,
-                body=deployment
+                body=job
             )
-            logger.info(f"Successfully created deployment {deployment_name}")
+            logger.info(f"Successfully created job {job_name}")
             return True
         except ApiException as e:
             if e.status == 409:
-                logger.warning(f"Deployment {deployment_name} already exists, updating...")
-                return self.update_worker_deployment(
-                    deployment_name, workers, hits_per_worker, duration_sec, test_id
-                )
-            logger.error(f"Failed to create deployment: {e}")
+                logger.warning(f"Job {job_name} already exists")
+                return True
+            logger.error(f"Failed to create job: {e}")
             return False
     
-    def update_worker_deployment(
-        self,
-        deployment_name: str,
-        workers: int,
-        hits_per_worker: int,
-        duration_sec: int,
-        test_id: str
-    ) -> bool:
-        """Update an existing worker deployment."""
-        try:
-            # Get existing deployment
-            deployment = self.apps_v1.read_namespaced_deployment(
-                name=deployment_name,
-                namespace=NAMESPACE
-            )
-            
-            # Update replicas and environment
-            deployment.spec.replicas = workers
-            for container in deployment.spec.template.spec.containers:
-                if container.name == "worker":
-                    for env in container.env:
-                        if env.name == "HITS_PER_SEC":
-                            env.value = str(hits_per_worker)
-                        elif env.name == "DURATION_SEC":
-                            env.value = str(duration_sec)
-            
-            self.apps_v1.patch_namespaced_deployment(
-                name=deployment_name,
-                namespace=NAMESPACE,
-                body=deployment
-            )
-            logger.info(f"Successfully updated deployment {deployment_name}")
-            return True
-        except ApiException as e:
-            logger.error(f"Failed to update deployment: {e}")
-            return False
-    
-    def delete_worker_deployment(self, test_id: str) -> bool:
-        """Delete a worker deployment by test ID."""
-        deployment_name = f"worker-{test_id[:8]}"
+    def delete_worker_job(self, test_id: str) -> bool:
+        """Delete a worker job by test ID."""
+        job_name = f"worker-{test_id[:8]}"
         
         try:
-            self.apps_v1.delete_namespaced_deployment(
-                name=deployment_name,
-                namespace=NAMESPACE
+            self.batch_v1.delete_namespaced_job(
+                name=job_name,
+                namespace=NAMESPACE,
+                propagation_policy="Background"
             )
-            logger.info(f"Successfully deleted deployment {deployment_name}")
+            logger.info(f"Successfully deleted job {job_name}")
             return True
         except ApiException as e:
             if e.status == 404:
-                logger.warning(f"Deployment {deployment_name} not found")
+                logger.warning(f"Job {job_name} not found")
                 return True
-            logger.error(f"Failed to delete deployment: {e}")
+            logger.error(f"Failed to delete job: {e}")
             return False
     
-    def list_worker_deployments(self) -> list:
-        """List all worker deployments managed by orchestrator."""
+    def list_worker_jobs(self) -> list:
+        """List all worker jobs managed by orchestrator."""
         try:
-            deployments = self.apps_v1.list_namespaced_deployment(
+            jobs = self.batch_v1.list_namespaced_job(
                 namespace=NAMESPACE,
                 label_selector="managed-by=orchestrator,app=load-worker"
             )
-            return [d.metadata.name for d in deployments.items]
+            return [j.metadata.name for j in jobs.items]
         except ApiException as e:
-            logger.error(f"Failed to list deployments: {e}")
+            logger.error(f"Failed to list jobs: {e}")
             return []
 
 
@@ -290,8 +250,8 @@ class ServiceBusConsumer:
             logger.info(f"Processing test {test_id}: {workers} workers, "
                         f"{hits_per_sec} hits/sec for {duration_sec}s")
             
-            # Create worker deployment
-            success = self.orchestrator.create_worker_deployment(
+            # Create worker job
+            success = self.orchestrator.create_worker_job(
                 test_id=test_id,
                 workers=workers,
                 hits_per_sec=hits_per_sec,
@@ -381,10 +341,10 @@ def main():
         # Initialize Kubernetes orchestrator
         orchestrator = KubernetesOrchestrator()
         
-        # List existing worker deployments
-        existing = orchestrator.list_worker_deployments()
+        # List existing worker jobs
+        existing = orchestrator.list_worker_jobs()
         if existing:
-            logger.info(f"Found existing worker deployments: {existing}")
+            logger.info(f"Found existing worker jobs: {existing}")
         
         # Initialize and run Service Bus consumer
         consumer = ServiceBusConsumer(orchestrator)
